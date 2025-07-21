@@ -54,6 +54,36 @@ object YTPlayerUtils {
         WEB_CREATOR,
         WEB_PREMIUM
     )
+    
+    /**
+     * Get optimized client order based on login status
+     */
+    private fun getOptimizedClientOrder(): Array<YouTubeClient> {
+        val isLoggedIn = YouTube.cookie != null
+        return if (isLoggedIn) {
+            // If logged in, prioritize premium client for restricted content
+            arrayOf(WEB_PREMIUM, WEB_REMIX, MOBILE) + STREAM_FALLBACK_CLIENTS
+        } else {
+            // If not logged in, use standard order
+            PRIMARY_CLIENTS + STREAM_FALLBACK_CLIENTS
+        }
+    }
+    
+    /**
+     * Check if the content appears to be restricted/premium based on playability status
+     */
+    private fun isRestrictedContent(playerResponse: PlayerResponse?): Boolean {
+        val status = playerResponse?.playabilityStatus?.status
+        val reason = playerResponse?.playabilityStatus?.reason?.lowercase()
+        
+        return when {
+            status == "LOGIN_REQUIRED" -> true
+            status == "UNPLAYABLE" && reason?.contains("sign in") == true -> true
+            status == "UNPLAYABLE" && reason?.contains("premium") == true -> true
+            status == "UNPLAYABLE" && reason?.contains("membership") == true -> true
+            else -> false
+        }
+    }
     data class PlaybackData(
         val audioConfig: PlayerResponse.PlayerConfig.AudioConfig?,
         val videoDetails: PlayerResponse.VideoDetails?,
@@ -96,7 +126,7 @@ object YTPlayerUtils {
 
         // Try primary clients first
         Timber.tag(logTag).d("Trying primary clients first for better performance")
-        val allClientsToTry = PRIMARY_CLIENTS + STREAM_FALLBACK_CLIENTS
+        val allClientsToTry = getOptimizedClientOrder()
         
         var mainPlayerResponse: PlayerResponse? = null
         var audioConfig: PlayerResponse.PlayerConfig.AudioConfig? = null
@@ -178,6 +208,11 @@ object YTPlayerUtils {
                 }
             } else {
                 Timber.tag(logTag).d("Player response status not OK: ${streamPlayerResponse?.playabilityStatus?.status}, reason: ${streamPlayerResponse?.playabilityStatus?.reason}")
+                
+                // Check if this is restricted content that might need authentication
+                if (isRestrictedContent(streamPlayerResponse) && !isLoggedIn) {
+                    Timber.tag(logTag).w("Detected restricted content but user is not logged in - content may require premium access")
+                }
             }
         }
 
@@ -189,8 +224,16 @@ object YTPlayerUtils {
         if (streamPlayerResponse.playabilityStatus.status != "OK") {
             val errorReason = streamPlayerResponse.playabilityStatus.reason
             Timber.tag(logTag).e("Playability status not OK: $errorReason")
+            
+            // Provide more helpful error message for restricted content
+            val enhancedErrorMessage = if (isRestrictedContent(streamPlayerResponse)) {
+                "This content requires authentication or premium access. Please sign in to YouTube Music."
+            } else {
+                errorReason
+            }
+            
             throw PlaybackException(
-                errorReason,
+                enhancedErrorMessage,
                 null,
                 PlaybackException.ERROR_CODE_REMOTE_ERROR
             )
@@ -222,6 +265,18 @@ object YTPlayerUtils {
         )
     }
     /**
+     * Get the best client for initial metadata based on login status and content requirements
+     */
+    private fun getBestInitialClient(): YouTubeClient {
+        val isLoggedIn = YouTube.cookie != null
+        return if (isLoggedIn) {
+            WEB_PREMIUM // Use premium client if logged in for better access to restricted content
+        } else {
+            WEB_REMIX   // Use regular client if not logged in
+        }
+    }
+    
+    /**
      * Simple player response intended to use for metadata only.
      * Stream URLs of this response might not work so don't use them.
      */
@@ -229,8 +284,9 @@ object YTPlayerUtils {
         videoId: String,
         playlistId: String? = null,
     ): Result<PlayerResponse> {
-        Timber.tag(logTag).d("Fetching metadata-only player response for videoId: $videoId using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
-        return YouTube.player(videoId, playlistId, client = MAIN_CLIENT)
+        val bestClient = getBestInitialClient()
+        Timber.tag(logTag).d("Fetching metadata-only player response for videoId: $videoId using client: ${bestClient.clientName}")
+        return YouTube.player(videoId, playlistId, client = bestClient)
             .onSuccess { Timber.tag(logTag).d("Successfully fetched metadata") }
             .onFailure { Timber.tag(logTag).e(it, "Failed to fetch metadata") }
     }
