@@ -102,5 +102,19 @@ data class YouTubeClient(
             loginSupported = false,
             useSignatureTimestamp = false
         )
+
+        /**
+         * Premium authenticated client for content requiring login
+         * Similar to Spotify authentication system
+         */
+        val WEB_PREMIUM = YouTubeClient(
+            clientName = "WEB_PREMIUM",
+            clientVersion = "2.20250312.04.00",
+            clientId = "1",
+            userAgent = USER_AGENT_WEB,
+            loginSupported = true,
+            loginRequired = true,
+            useSignatureTimestamp = true,
+        )
     }
 }

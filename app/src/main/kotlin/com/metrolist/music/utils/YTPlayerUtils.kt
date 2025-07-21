@@ -14,6 +14,7 @@ import com.metrolist.innertube.models.YouTubeClient.Companion.ANDROID_VR_NO_AUTH
 import com.metrolist.innertube.models.YouTubeClient.Companion.MOBILE
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_CREATOR
+import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_PREMIUM
 import okhttp3.OkHttpClient
 import timber.log.Timber
 
@@ -34,7 +35,15 @@ object YTPlayerUtils {
      */
     private val MAIN_CLIENT: YouTubeClient = WEB_REMIX
     /**
-     * Clients used for fallback streams in case the streams of the main client do not work.
+     * Primary clients to try first - includes authenticated client for premium content
+     */
+    private val PRIMARY_CLIENTS: Array<YouTubeClient> = arrayOf(
+        WEB_REMIX,      // Best for metadata and premium formats
+        WEB_PREMIUM,    // For authenticated content
+        MOBILE          // Fast mobile streams
+    )
+    /**
+     * Clients used for fallback streams in case the primary clients do not work.
      */
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
         ANDROID_VR_NO_AUTH,
@@ -42,7 +51,8 @@ object YTPlayerUtils {
         TVHTML5_SIMPLY_EMBEDDED_PLAYER,
         IOS,
         WEB,
-        WEB_CREATOR
+        WEB_CREATOR,
+        WEB_PREMIUM
     )
     data class PlaybackData(
         val audioConfig: PlayerResponse.PlayerConfig.AudioConfig?,
@@ -84,59 +94,56 @@ object YTPlayerUtils {
             }
         Timber.tag(logTag).d("Session authentication status: ${if (isLoggedIn) "Logged in" else "Not logged in"}")
 
-        Timber.tag(logTag).d("Attempting to get player response using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
-        val mainPlayerResponse =
-            YouTube.player(videoId, playlistId, MAIN_CLIENT, signatureTimestamp).getOrThrow()
-        val audioConfig = mainPlayerResponse.playerConfig?.audioConfig
-        val videoDetails = mainPlayerResponse.videoDetails
-        val playbackTracking = mainPlayerResponse.playbackTracking
+        // Try primary clients first
+        Timber.tag(logTag).d("Trying primary clients first for better performance")
+        val allClientsToTry = PRIMARY_CLIENTS + STREAM_FALLBACK_CLIENTS
+        
+        var mainPlayerResponse: PlayerResponse? = null
+        var audioConfig: PlayerResponse.PlayerConfig.AudioConfig? = null
+        var videoDetails: PlayerResponse.VideoDetails? = null
+        var playbackTracking: PlayerResponse.PlaybackTracking? = null
         var format: PlayerResponse.StreamingData.Format? = null
         var streamUrl: String? = null
         var streamExpiresInSeconds: Int? = null
         var streamPlayerResponse: PlayerResponse? = null
 
-        for (clientIndex in (-1 until STREAM_FALLBACK_CLIENTS.size)) {
+        for (clientIndex in allClientsToTry.indices) {
             // reset for each client
             format = null
             streamUrl = null
             streamExpiresInSeconds = null
 
-            // decide which client to use for streams and load its player response
-            val client: YouTubeClient
-            if (clientIndex == -1) {
-                // try with streams from main client first
-                client = MAIN_CLIENT
-                streamPlayerResponse = mainPlayerResponse
-                Timber.tag(logTag).d("Trying stream from MAIN_CLIENT: ${client.clientName}")
-            } else {
-                // after main client use fallback clients
-                client = STREAM_FALLBACK_CLIENTS[clientIndex]
-                Timber.tag(logTag).d("Trying fallback client ${clientIndex + 1}/${STREAM_FALLBACK_CLIENTS.size}: ${client.clientName}")
+            val client = allClientsToTry[clientIndex]
+            val isPrimaryClient = clientIndex < PRIMARY_CLIENTS.size
 
-                if (client.loginRequired && !isLoggedIn && YouTube.cookie == null) {
-                    // skip client if it requires login but user is not logged in
-                    Timber.tag(logTag).d("Skipping client ${client.clientName} - requires login but user is not logged in")
-                    continue
-                }
-
-                Timber.tag(logTag).d("Fetching player response for fallback client: ${client.clientName}")
-                streamPlayerResponse =
-                    YouTube.player(videoId, playlistId, client, signatureTimestamp).getOrNull()
+            if (client.loginRequired && !isLoggedIn && YouTube.cookie == null) {
+                // skip client if it requires login but user is not logged in
+                Timber.tag(logTag).d("Skipping client ${client.clientName} - requires login but user is not logged in")
+                continue
             }
+
+            Timber.tag(logTag).d("Fetching player response for client: ${client.clientName}")
+            streamPlayerResponse =
+                YouTube.player(videoId, playlistId, client, signatureTimestamp).getOrNull()
 
             // process current client response
             if (streamPlayerResponse?.playabilityStatus?.status == "OK") {
-                Timber.tag(logTag).d("Player response status OK for client: ${if (clientIndex == -1) MAIN_CLIENT.clientName else STREAM_FALLBACK_CLIENTS[clientIndex].clientName}")
+                Timber.tag(logTag).d("Player response status OK for client: ${client.clientName}")
+
+                mainPlayerResponse = streamPlayerResponse
+                audioConfig = mainPlayerResponse.playerConfig?.audioConfig
+                videoDetails = mainPlayerResponse.videoDetails
+                playbackTracking = mainPlayerResponse.playbackTracking
 
                 format =
                     findFormat(
-                        streamPlayerResponse,
+                        mainPlayerResponse,
                         audioQuality,
                         connectivityManager,
                     )
 
                 if (format == null) {
-                    Timber.tag(logTag).d("No suitable format found for client: ${if (clientIndex == -1) MAIN_CLIENT.clientName else STREAM_FALLBACK_CLIENTS[clientIndex].clientName}")
+                    Timber.tag(logTag).d("No suitable format found for client: ${client.clientName}")
                     continue
                 }
 
@@ -156,18 +163,18 @@ object YTPlayerUtils {
 
                 Timber.tag(logTag).d("Stream expires in: $streamExpiresInSeconds seconds")
 
-                if (clientIndex == STREAM_FALLBACK_CLIENTS.size - 1) {
+                if (clientIndex == allClientsToTry.size - 1) {
                     /** skip [validateStatus] for last client */
-                    Timber.tag(logTag).d("Using last fallback client without validation: ${STREAM_FALLBACK_CLIENTS[clientIndex].clientName}")
+                    Timber.tag(logTag).d("Using last fallback client without validation: ${client.clientName}")
                     break
                 }
 
                 if (validateStatus(streamUrl)) {
                     // working stream found
-                    Timber.tag(logTag).d("Stream validated successfully with client: ${if (clientIndex == -1) MAIN_CLIENT.clientName else STREAM_FALLBACK_CLIENTS[clientIndex].clientName}")
+                    Timber.tag(logTag).d("Stream validated successfully with client: ${client.clientName}")
                     break
                 } else {
-                    Timber.tag(logTag).d("Stream validation failed for client: ${if (clientIndex == -1) MAIN_CLIENT.clientName else STREAM_FALLBACK_CLIENTS[clientIndex].clientName}")
+                    Timber.tag(logTag).d("Stream validation failed for client: ${client.clientName}")
                 }
             } else {
                 Timber.tag(logTag).d("Player response status not OK: ${streamPlayerResponse?.playabilityStatus?.status}, reason: ${streamPlayerResponse?.playabilityStatus?.reason}")
