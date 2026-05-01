@@ -85,6 +85,8 @@
     <string name="seek_backward_dynamic">-%1$d seconds backward</string>
     <string name="seek_seconds_addup">Progressive seek</string>
     <string name="seek_seconds_addup_description">When enabled, adds 5 extra seconds incrementally with each seek</string>
+    <string name="double_tap_to_like">Double-tap to like</string>
+    <string name="double_tap_to_like_description">Double-tap the cover art to like the song instead of seeking</string>
 
     <string name="similar_content">Similar content</string>
 

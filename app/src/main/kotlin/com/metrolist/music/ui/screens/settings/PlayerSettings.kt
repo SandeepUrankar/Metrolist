@@ -49,6 +49,7 @@ import com.metrolist.music.constants.AutoLoadMoreKey
 import com.metrolist.music.constants.AutoSkipNextOnErrorKey
 import com.metrolist.music.constants.AutoplayKey
 import com.metrolist.music.constants.DisableLoadMoreWhenRepeatAllKey
+import com.metrolist.music.constants.DoubleTapToLikeKey
 import com.metrolist.music.constants.EnableGoogleCastKey
 import com.metrolist.music.constants.HistoryDuration
 import com.metrolist.music.constants.KeepScreenOn
@@ -149,6 +150,11 @@ fun PlayerSettings(
 
     val (seekExtraSeconds, onSeekExtraSeconds) = rememberPreference(
         SeekExtraSeconds,
+        defaultValue = false
+    )
+
+    val (doubleTapToLike, onDoubleTapToLikeChange) = rememberPreference(
+        DoubleTapToLikeKey,
         defaultValue = false
     )
 
@@ -557,6 +563,7 @@ fun PlayerSettings(
                         Switch(
                             checked = seekExtraSeconds,
                             onCheckedChange = onSeekExtraSeconds,
+                            enabled = !doubleTapToLike,
                             thumbContent = {
                                 Icon(
                                     painter = painterResource(
@@ -568,7 +575,28 @@ fun PlayerSettings(
                             }
                         )
                     },
-                    onClick = { onSeekExtraSeconds(!seekExtraSeconds) }
+                    onClick = { if (!doubleTapToLike) onSeekExtraSeconds(!seekExtraSeconds) }
+                ))
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.favorite),
+                    title = { Text(stringResource(R.string.double_tap_to_like)) },
+                    description = { Text(stringResource(R.string.double_tap_to_like_description)) },
+                    trailingContent = {
+                        Switch(
+                            checked = doubleTapToLike,
+                            onCheckedChange = onDoubleTapToLikeChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (doubleTapToLike) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onDoubleTapToLikeChange(!doubleTapToLike) }
                 ))
             }
         )
