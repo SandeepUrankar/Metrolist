@@ -6,6 +6,10 @@
 package com.metrolist.music.ui.player
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -73,6 +77,7 @@ import com.metrolist.music.LocalListenTogetherManager
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
 import com.metrolist.music.constants.CropAlbumArtKey
+import com.metrolist.music.constants.DoubleTapToLikeKey
 import com.metrolist.music.constants.HidePlayerThumbnailKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
 import com.metrolist.music.constants.PlayerBackgroundStyleKey
@@ -85,6 +90,9 @@ import com.metrolist.music.ui.component.CastButton
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.delay
+
+private const val LIKE_ANIMATION_HOLD_DURATION_MS = 600L
+private const val LIKE_ANIMATION_FADEOUT_DURATION_MS = 400
 
 /**
  * Pre-calculated thumbnail dimensions to avoid repeated calculations during recomposition.
@@ -503,8 +511,32 @@ private fun ThumbnailItem(
     modifier: Modifier = Modifier,
 ) {
     val incrementalSeekSkipEnabled by rememberPreference(SeekExtraSeconds, defaultValue = false)
+    val doubleTapToLike by rememberPreference(DoubleTapToLikeKey, defaultValue = false)
     var skipMultiplier by remember { mutableIntStateOf(1) }
     var lastTapTime by remember { mutableLongStateOf(0L) }
+
+    var likeAnimTrigger by remember { mutableIntStateOf(0) }
+    val likeAnimScale = remember { Animatable(0f) }
+    val likeAnimAlpha = remember { Animatable(0f) }
+
+    LaunchedEffect(likeAnimTrigger) {
+        if (likeAnimTrigger > 0) {
+            likeAnimScale.snapTo(0f)
+            likeAnimAlpha.snapTo(1f)
+            likeAnimScale.animateTo(
+                targetValue = 1.0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
+            delay(LIKE_ANIMATION_HOLD_DURATION_MS)
+            likeAnimAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = LIKE_ANIMATION_FADEOUT_DURATION_MS)
+            )
+        }
+    }
 
     Box(
         modifier = modifier
@@ -527,28 +559,33 @@ private fun ThumbnailItem(
                     onDoubleTap = { offset ->
                         if (isListenTogetherGuest) return@detectTapGestures
 
-                        val currentPosition = playerConnection.player.currentPosition
-                        val duration = playerConnection.player.duration
-
-                        val now = System.currentTimeMillis()
-                        if (incrementalSeekSkipEnabled && now - lastTapTime < 1000) {
-                            skipMultiplier++
+                        if (doubleTapToLike) {
+                            playerConnection.toggleLike()
+                            likeAnimTrigger++
                         } else {
-                            skipMultiplier = 1
-                        }
-                        lastTapTime = now
+                            val currentPosition = playerConnection.player.currentPosition
+                            val duration = playerConnection.player.duration
 
-                        val skipAmount = 5000 * skipMultiplier
+                            val now = System.currentTimeMillis()
+                            if (incrementalSeekSkipEnabled && now - lastTapTime < 1000) {
+                                skipMultiplier++
+                            } else {
+                                skipMultiplier = 1
+                            }
+                            lastTapTime = now
 
-                        val isLeftSide = (layoutDirection == LayoutDirection.Ltr && offset.x < size.width / 2) ||
-                                (layoutDirection == LayoutDirection.Rtl && offset.x > size.width / 2)
+                            val skipAmount = 5000 * skipMultiplier
 
-                        if (isLeftSide) {
-                            playerConnection.player.seekTo((currentPosition - skipAmount).coerceAtLeast(0))
-                            onSeek(context.getString(R.string.seek_backward_dynamic, skipAmount / 1000), true)
-                        } else {
-                            playerConnection.player.seekTo((currentPosition + skipAmount).coerceAtMost(duration))
-                            onSeek(context.getString(R.string.seek_forward_dynamic, skipAmount / 1000), true)
+                            val isLeftSide = (layoutDirection == LayoutDirection.Ltr && offset.x < size.width / 2) ||
+                                    (layoutDirection == LayoutDirection.Rtl && offset.x > size.width / 2)
+
+                            if (isLeftSide) {
+                                playerConnection.player.seekTo((currentPosition - skipAmount).coerceAtLeast(0))
+                                onSeek(context.getString(R.string.seek_backward_dynamic, skipAmount / 1000), true)
+                            } else {
+                                playerConnection.player.seekTo((currentPosition + skipAmount).coerceAtMost(duration))
+                                onSeek(context.getString(R.string.seek_forward_dynamic, skipAmount / 1000), true)
+                            }
                         }
                     }
                 )
@@ -582,6 +619,26 @@ private fun ThumbnailItem(
                     .padding(8.dp),
                 tintColor = textBackgroundColor
             )
+
+            if (likeAnimAlpha.value > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = likeAnimScale.value
+                            scaleY = likeAnimScale.value
+                            alpha = likeAnimAlpha.value
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.favorite),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(96.dp)
+                    )
+                }
+            }
         }
     }
 }
