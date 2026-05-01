@@ -91,6 +91,9 @@ import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.delay
 
+private const val LIKE_ANIMATION_HOLD_DURATION_MS = 600L
+private const val LIKE_ANIMATION_FADEOUT_DURATION_MS = 400
+
 /**
  * Pre-calculated thumbnail dimensions to avoid repeated calculations during recomposition.
  * All values are computed once and cached.
@@ -527,10 +530,10 @@ private fun ThumbnailItem(
                     stiffness = Spring.StiffnessMediumLow
                 )
             )
-            delay(600L)
+            delay(LIKE_ANIMATION_HOLD_DURATION_MS)
             likeAnimAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 400)
+                animationSpec = tween(durationMillis = LIKE_ANIMATION_FADEOUT_DURATION_MS)
             )
         }
     }
